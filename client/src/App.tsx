@@ -32,7 +32,7 @@ function App() {
       <Sidebar
         files={files}
         selectedFiles={selectedFiles}
-        isLoading={isLoading}
+        isLoading={isFileLoading}
         onSelectFile={toggleFileSelection}
         onDeleteFile={file => deleteFile(file.path)}
         onUploadFiles={uploadFiles}
@@ -41,8 +41,9 @@ function App() {
       <MainContent
         messages={messages}
         selectedFiles={selectedFiles}
-        isLoading={isLoading}
-        onSendMessage={text => sendMessage(text, selectedFiles)}
+        isLoading={isChatLoading}
+        onSendMessage={(text, paths, model) => sendMessage(text, paths, model)}
+        onRemoveFile={toggleFileSelection}
       />
     </div>
   );

@@ -11,42 +11,70 @@ export interface FileInfo {
 }
 
 export class FileSystemTools {
+  private storageRoot: string;
+
+  constructor() {
+    this.storageRoot = path.join(__dirname, '../../storage');
+  }
+
+  private validatePath(targetPath: string): string {
+    // Convert empty or "." paths to storage root
+    if (!targetPath || targetPath === '.') {
+      return this.storageRoot;
+    }
+
+    // Always resolve relative to storage root
+    const absolutePath = path.join(this.storageRoot, targetPath);
+    const normalizedPath = path.normalize(absolutePath);
+    
+    // Ensure the path is within storage directory
+    if (!normalizedPath.startsWith(this.storageRoot)) {
+      throw new Error('Access denied: Path is outside storage directory');
+    }
+    
+    return normalizedPath;
+  }
+
   async readDirectory(dirPath: string, recursive: boolean = false): Promise<FileInfo[]> {
     try {
-      Logger.debug('Reading directory', { dirPath, recursive });
-      const entries = await fs.readdir(dirPath, { withFileTypes: true });
+      const fullPath = this.validatePath(dirPath);
+      Logger.debug('Reading directory', { dirPath, fullPath, recursive });
+
+      const entries = await fs.readdir(fullPath, { withFileTypes: true });
       const files: FileInfo[] = [];
 
       for (const entry of entries) {
-        const fullPath = path.join(dirPath, entry.name);
+        const entryFullPath = path.join(fullPath, entry.name);
+        // Create path relative to storage root
+        const relativePath = path.relative(this.storageRoot, entryFullPath);
+        
         if (entry.isDirectory()) {
           const dirInfo: FileInfo = {
             name: entry.name,
-            path: fullPath,
+            path: relativePath,
             type: 'directory'
           };
 
           if (recursive) {
-            dirInfo.children = await this.readDirectory(fullPath, true);
+            // Pass the relative path for recursion
+            dirInfo.children = await this.readDirectory(relativePath, true);
           }
 
           files.push(dirInfo);
         } else {
           try {
-            // Read the file content for files
-            const content = await fs.readFile(fullPath, 'utf-8');
+            const content = await fs.readFile(entryFullPath, 'utf-8');
             files.push({
               name: entry.name,
-              path: fullPath,
+              path: relativePath,
               type: 'file',
               content
             });
           } catch (error) {
-            Logger.error(`Failed to read file content: ${fullPath}`, error);
-            // Still include the file, just without content
+            Logger.error(`Failed to read file content: ${entryFullPath}`, error);
             files.push({
               name: entry.name,
-              path: fullPath,
+              path: relativePath,
               type: 'file'
             });
           }
@@ -68,11 +96,12 @@ export class FileSystemTools {
 
   async readFile(filePath: string): Promise<FileInfo> {
     try {
+      const fullPath = this.validatePath(filePath);
       Logger.debug('Reading file', { filePath });
-      const content = await fs.readFile(filePath, 'utf-8');
+      const content = await fs.readFile(fullPath, 'utf-8');
       const fileInfo: FileInfo = {
         name: path.basename(filePath),
-        path: filePath,
+        path: filePath, // Return relative path
         type: 'file',
         content
       };
@@ -89,14 +118,23 @@ export class FileSystemTools {
 
   async getContextFromPath(targetPath: string): Promise<FileInfo[]> {
     try {
-      Logger.debug('Getting context from path', { targetPath });
-      const stat = await fs.stat(targetPath);
+      // Always resolve relative to storage directory
+      const fullPath = path.join(this.storageRoot, targetPath);
+      Logger.debug('Getting context from path', { targetPath, fullPath });
+      
+      const stat = await fs.stat(fullPath);
       
       let result: FileInfo[];
       if (stat.isDirectory()) {
         result = await this.readDirectory(targetPath);
       } else {
-        result = [await this.readFile(targetPath)];
+        const content = await fs.readFile(fullPath, 'utf-8');
+        result = [{
+          name: path.basename(targetPath),
+          path: targetPath,
+          type: 'file',
+          content
+        }];
       }
 
       Logger.debug('Context retrieved successfully', { 

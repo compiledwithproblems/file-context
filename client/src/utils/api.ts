@@ -3,6 +3,18 @@ import { FileInfo, QueryRequest, QueryResponse } from '../types';
 // Update this to match your actual API server URL
 const API_BASE = 'http://localhost:3001/api';
 
+// Helper to normalize paths to use forward slashes and ensure relative to storage
+const normalizePath = (path: string) => {
+  if (!path) return '';
+  // Remove any leading slashes and 'storage/' prefix and ensure path is relative
+  const cleanPath = path
+    .replace(/^[\/\\]|^storage[\/\\]/, '')  // Remove leading slashes and storage prefix
+    .replace(/\\/g, '/')  // Convert backslashes to forward slashes
+    .replace(/\/+/g, '/') // Remove any double slashes
+    .replace(/^\.\//, ''); // Remove leading ./
+  return cleanPath;
+};
+
 async function fetchWithRetry(url: string, options?: RequestInit, retries = 3): Promise<Response> {
   for (let i = 0; i < retries; i++) {
     try {
@@ -17,9 +29,10 @@ async function fetchWithRetry(url: string, options?: RequestInit, retries = 3): 
   throw new Error('Failed to fetch after retries');
 }
 
-export async function listFiles(path = './', recursive = false): Promise<FileInfo[]> {
+export async function listFiles(path = '.', recursive = false): Promise<FileInfo[]> {
   try {
-    const params = new URLSearchParams({ path, recursive: String(recursive) });
+    const normalizedPath = normalizePath(path);
+    const params = new URLSearchParams({ path: normalizedPath, recursive: String(recursive) });
     const response = await fetchWithRetry(`${API_BASE}/files?${params}`);
     
     if (!response.ok) {
@@ -37,10 +50,11 @@ export async function listFiles(path = './', recursive = false): Promise<FileInf
 
 export async function createFolder(path: string): Promise<void> {
   try {
+    const normalizedPath = normalizePath(path);
     const response = await fetchWithRetry(`${API_BASE}/folders`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ path }),
+      body: JSON.stringify({ path: normalizedPath }),
     });
     
     if (!response.ok) {
@@ -58,7 +72,7 @@ export async function uploadFiles(files: File[], folderPath: string): Promise<vo
   try {
     const formData = new FormData();
     files.forEach(file => formData.append('files', file));
-    formData.append('folderPath', folderPath);
+    formData.append('folderPath', normalizePath(folderPath));
 
     const response = await fetchWithRetry(`${API_BASE}/folders/upload`, {
       method: 'POST',
@@ -99,7 +113,8 @@ export async function uploadFile(file: File): Promise<void> {
 
 export async function deleteFile(filename: string): Promise<void> {
   try {
-    const response = await fetchWithRetry(`${API_BASE}/files/${encodeURIComponent(filename)}`, {
+    const normalizedPath = normalizePath(filename);
+    const response = await fetchWithRetry(`${API_BASE}/files/${encodeURIComponent(normalizedPath)}`, {
       method: 'DELETE',
     });
     
@@ -116,6 +131,8 @@ export async function deleteFile(filename: string): Promise<void> {
 
 export async function queryLLM(request: QueryRequest): Promise<QueryResponse> {
   try {
+    console.log('Sending LLM request:', request);
+
     const response = await fetchWithRetry(`${API_BASE}/query`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -127,9 +144,15 @@ export async function queryLLM(request: QueryRequest): Promise<QueryResponse> {
       console.error('Query LLM error:', text);
       throw new Error('Failed to query LLM. Is the backend server running?');
     }
-    return response.json();
+
+    const result = await response.json();
+    if (result.error) {
+      throw new Error(result.error);
+    }
+
+    return result;
   } catch (err) {
     console.error('Query LLM error:', err);
-    throw new Error('Failed to query LLM. Is the backend server running?');
+    throw new Error(err instanceof Error ? err.message : 'Failed to query LLM');
   }
 } 

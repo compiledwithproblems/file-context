@@ -7,7 +7,7 @@ import multer from 'multer';
 import path from 'path';
 import fs from 'fs';
 import yaml from 'js-yaml';
-import { FileSystemTools } from './core/fileSystem';
+import { FileSystemTools, FileInfo } from './core/fileSystem';
 import { ModelInterface } from './core/modelInterface';
 import { Logger } from './utils/logger';
 import { fileUtils } from './utils/fileUtils';
@@ -24,7 +24,6 @@ const storage = multer.diskStorage({
     cb(null, path.join(__dirname, '../storage'));
   },
   filename: (req: Express.Request, file: Express.Multer.File, cb: (error: Error | null, filename: string) => void) => {
-    // Ensure filename is unique by appending timestamp if file exists
     const uniqueFilename = `${path.parse(file.originalname).name}-${Date.now()}${path.extname(file.originalname)}`;
     cb(null, uniqueFilename);
   }
@@ -53,7 +52,11 @@ const upload = multer({
 const openApiPath = path.join(__dirname, 'resources', 'file-context-api.yml');
 const openApiSpec = yaml.load(fs.readFileSync(openApiPath, 'utf8')) as OpenAPIV3.Document;
 
-app.use(cors());
+app.use(cors({
+  origin: ['http://localhost:5173', 'http://127.0.0.1:5173'],
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization']
+}));
 app.use(express.json());
 app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(openApiSpec));
 
@@ -63,9 +66,18 @@ const modelInterface = new ModelInterface();
 // Get files/directories at path
 app.get('/api/files', async (req, res) => {
   try {
-    const dirPath = req.query.path as string || './';
+    // Convert undefined, empty string, or '.' to empty string to get storage root
+    let requestedPath = (req.query.path as string) || '';
+    requestedPath = requestedPath === '.' ? '' : requestedPath;
+    
     const recursive = req.query.recursive === 'true';
-    const files = await fileTools.readDirectory(dirPath, recursive);
+    
+    // Validate path is safe
+    if (!validators.isValidPath(requestedPath)) {
+      throw new Error('Invalid path parameter');
+    }
+
+    const files = await fileTools.readDirectory(requestedPath, recursive);
     res.json(files);
   } catch (error) {
     res.status(500).json({ error: error instanceof Error ? error.message : 'Unknown error' });
@@ -153,112 +165,56 @@ app.post('/api/folders/upload', async (req, res) => {
 
 // Query LLM with file context
 app.post('/api/query', async (req, res) => {
-    try {
-      const { paths, path, query, model = config.defaultModel } = req.body;
-      
-      Logger.debug('Received query request', { paths, path, query, model });
-      
-      // Validate inputs
-      if (!validators.isValidQuery(query)) {
-        throw new Error('Invalid query parameter');
-      }
-
-      let context = '';
-      
-      // Handle array of paths (new method)
-      if (paths?.length) {
-        Logger.debug('Processing multiple paths', { paths });
-        const allContexts = await Promise.all(
-          paths.map(async (p: string) => {
-            if (!validators.isValidPath(p)) {
-              Logger.warn('Invalid path in paths array', { path: p });
-              return null;
-            }
-            const sanitizedPath = fileUtils.sanitizePath(p);
-            const contextFiles = await fileTools.getContextFromPath(sanitizedPath);
-            return contextFiles;
-          })
-        );
-
-        // Filter out nulls and flatten array
-        const validContextFiles = allContexts
-          .filter(Boolean)
-          .flat()
-          .filter(file => file.content && fileUtils.isTextFile(file.path));
-
-        Logger.debug('Retrieved context files', {
-          numFiles: validContextFiles.length,
-          files: validContextFiles.map(f => ({ name: f.name, type: f.type }))
-        });
-
-        context = validContextFiles
-          .map(file => `File: ${file.name}\n${file.content}`)
-          .join('\n\n');
-      }
-      // Handle single path (legacy method)
-      else if (path) {
-        if (!validators.isValidPath(path)) {
-          throw new Error('Invalid path parameter');
-        }
-        const sanitizedPath = fileUtils.sanitizePath(path);
-        Logger.debug('Processing single path', { originalPath: path, sanitizedPath });
-        
-        const contextFiles = await fileTools.getContextFromPath(sanitizedPath);
-        const filteredFiles = contextFiles.filter(file => file.content && fileUtils.isTextFile(file.path));
-        
-        Logger.debug('Retrieved context files', { 
-          numFiles: filteredFiles.length,
-          files: filteredFiles.map(f => ({ name: f.name, type: f.type }))
-        });
-
-        context = filteredFiles
-          .map(file => `File: ${file.name}\n${file.content}`)
-          .join('\n\n');
-      }
-      
-      Logger.debug('Generated context', { 
-        contextLength: context.length,
-        hasContent: context.length > 0
-      });
-  
-      const formattedPrompt = promptUtils.formatContextPrompt(
-        promptUtils.truncateContext(context),
-        query
-      );
-      
-      Logger.debug('Formatted prompt', { 
-        promptLength: formattedPrompt.length,
-        truncated: formattedPrompt.length < context.length,
-        prompt: formattedPrompt
-      });
-  
-      Logger.debug('Processing query', { 
-        paths: paths || path || 'no path provided', 
-        model 
-      });
-      
-      let response;
-      switch (model) {
-        case 'ollama':
-          response = await modelInterface.queryOllama(formattedPrompt, context);
-          break;
-        case 'together':
-          response = await modelInterface.queryTogether(formattedPrompt, context);
-          break;
-        case 'llamacpp':
-          response = await modelInterface.queryLlamaCpp(formattedPrompt, context);
-          break;
-        default:
-          throw new Error('Invalid model specified');
-      }
-  
-      Logger.info('Query processed successfully');
-      res.json(response);
-    } catch (error) {
-      Logger.error('Error processing query', error);
-      res.status(500).json({ error: error instanceof Error ? error.message : 'Unknown error' });
+  try {
+    const { path: filePath, query, model } = req.body;
+    
+    // Validate model is required
+    if (!validators.isValidModel(model)) {
+      throw new Error('Invalid model parameter');
     }
-  });
+
+    // Initialize empty context if no path provided
+    let context: FileInfo[] = [];
+
+    // Only process paths if they were provided
+    if (filePath !== undefined) {
+      // Validate path if provided
+      if (!validators.isValidPath(filePath)) {
+        throw new Error('Invalid path parameter');
+      }
+
+      // Normalize paths to ensure they're relative to storage
+      const normalizePath = (path: string) => {
+        // Remove any leading slashes and 'storage/' prefix if present
+        return path.replace(/^[\/\\]|^storage[\/\\]/, '');
+      };
+
+      if (Array.isArray(filePath)) {
+        const contextArrays = await Promise.all(filePath.map(async (path) => {
+          const normalizedPath = normalizePath(path);
+          Logger.debug('Processing array path', { originalPath: path, normalizedPath });
+          return fileTools.getContextFromPath(normalizedPath);
+        }));
+        context = contextArrays.flat();
+      } else {
+        const normalizedPath = normalizePath(filePath);
+        Logger.debug('Processing single path', { originalPath: filePath, normalizedPath });
+        context = await fileTools.getContextFromPath(normalizedPath);
+      }
+    } else {
+      Logger.debug('No path provided, proceeding with empty context');
+    }
+
+    // Process query with model
+    const response = await modelInterface.query(query, context, model);
+    res.json(response);
+  } catch (error) {
+    Logger.error('Error processing query', error);
+    res.status(500).json({ 
+      error: error instanceof Error ? error.message : 'Unknown error'
+    });
+  }
+});
 
 // Upload file to storage
 app.post('/api/files/upload', upload.single('file'), async (req, res) => {

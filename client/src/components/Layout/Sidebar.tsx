@@ -9,7 +9,7 @@ interface SidebarProps {
   isLoading?: boolean;
   onSelectFile: (file: FileInfo) => void;
   onDeleteFile: (file: FileInfo) => void;
-  onUploadFiles: (files: File[]) => void;
+  onUploadFiles: (files: File[], folderPath: string) => void;
   onCreateFolder: (path: string) => void;
 }
 
@@ -36,6 +36,7 @@ export function Sidebar({
         selectedFiles={selectedFiles}
         onSelect={onSelectFile}
         onDelete={onDeleteFile}
+        onUpload={onUploadFiles}
         isLoading={isLoading}
       />
     </div>

@@ -1,17 +1,23 @@
 import { useRef } from 'react';
 
 interface FileUploadProps {
-  onUpload: (files: File[]) => void;
+  onUpload: (files: File[], folderPath: string) => void;
+  folderPath?: string;
   isLoading?: boolean;
 }
 
-export function FileUpload({ onUpload, isLoading }: FileUploadProps) {
+export function FileUpload({ onUpload, folderPath = '.', isLoading }: FileUploadProps) {
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const handleUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(e.target.files || []);
     if (files.length > 0) {
-      onUpload(files);
+      // Remove storage/ prefix and normalize slashes
+      const normalizedPath = folderPath
+        .replace(/^[\/\\]|^storage[\/\\]/, '')
+        .replace(/\\/g, '/')
+        .replace(/\/+/g, '/');
+      onUpload(files, normalizedPath);
       if (fileInputRef.current) {
         fileInputRef.current.value = '';
       }

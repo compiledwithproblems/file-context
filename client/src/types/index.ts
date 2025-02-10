@@ -23,8 +23,7 @@ export interface CreateFolderRequest {
 }
 
 export interface QueryRequest {
-  paths?: string[];
-  path?: string;
+  path?: string | string[];
   query: string;
   model?: 'llamacpp' | 'ollama' | 'together';
 }

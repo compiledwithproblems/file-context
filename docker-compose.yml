@@ -1,0 +1,39 @@
+version: '3.8'
+
+services:
+  file-context-client:
+    container_name: file-context-client
+    build: 
+      context: ./client
+      dockerfile: Dockerfile
+    ports:
+      - "5173:5173"
+    volumes:
+      - ./client:/app
+      - /app/node_modules
+    environment:
+      - VITE_API_URL=http://localhost:3001
+    depends_on:
+      - file-context-api
+
+  file-context-api:
+    container_name: file-context-api
+    build:
+      context: ./file-context-mcp
+      dockerfile: Dockerfile
+    ports:
+      - "3001:3001"
+    volumes:
+      - ./file-context-mcp:/app
+      - /app/node_modules
+      - ./file-context-mcp/storage:/app/storage
+    environment:
+      - PORT=3001
+      - TOGETHER_API_KEY=${TOGETHER_API_KEY}
+      - OLLAMA_BASE_URL=http://localhost:11434
+      - MODEL_NAME=llama3.2
+    env_file:
+      - file-context-mcp/.env
+
+volumes:
+  ollama_data: 

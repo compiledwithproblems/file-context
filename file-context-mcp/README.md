@@ -6,64 +6,132 @@ File Context MCP is a TypeScript-based application that provides an API for quer
 ## Core Features
 
 ### 1. File System Navigation
-- Dynamic file and directory traversal
+- Secure storage directory isolation
+- Dynamic file and directory traversal within storage
 - Support for multiple file types (`.txt`, `.md`, `.ts`, `.json`, etc.)
-- Safe path handling with sanitization
+- Safe path handling with sanitization and validation
 
-```1:12:src/utils/fileUtils.ts
-import path from 'path';
+```typescript:src/core/fileSystem.ts
+export class FileSystemTools {
+  private storageRoot: string;
 
-export const fileUtils = {
-  isTextFile(filePath: string): boolean {
-    const textExtensions = [
-      '.txt', '.md', '.js', '.ts', '.json', '.yaml', '.yml', 
-      '.html', '.css', '.csv', '.xml', '.log', '.env',
-      '.jsx', '.tsx', '.py', '.java', '.cpp', '.c', '.h'
-    ];
-    return textExtensions.includes(path.extname(filePath).toLowerCase());
-  },
+  constructor() {
+    this.storageRoot = path.join(__dirname, '../../storage');
+  }
 
+  private validatePath(targetPath: string): string {
+    // Convert empty or "." paths to storage root
+    if (!targetPath || targetPath === '.') {
+      return this.storageRoot;
+    }
+
+    // Always resolve relative to storage root
+    const absolutePath = path.join(this.storageRoot, targetPath);
+    const normalizedPath = path.normalize(absolutePath);
+    
+    // Ensure the path is within storage directory
+    if (!normalizedPath.startsWith(this.storageRoot)) {
+      throw new Error('Access denied: Path is outside storage directory');
+    }
+    
+    return normalizedPath;
+  }
+}
 ```
-
 
 ### 2. Context Processing
 - Intelligent context formatting for LLM queries
-- Context truncation to handle large files
+- Smart context truncation with configurable limits:
+  - Per-file limit (1000 characters)
+  - Total context limit (4000 characters)
 - File content aggregation for directory queries
+- Automatic context size management to prevent timeouts
 
-```1:30:src/utils/promptUtils.ts
-export const promptUtils = {
-    formatContextPrompt(context: string, query: string): string {
-      return `
-  You are an AI assistant analyzing the following content:
-  
-  ---BEGIN CONTEXT---
-  ${context}
-  ---END CONTEXT---
-  
-  Please respond to the following query:
-  ${query}
-  
-  Base your response only on the information provided in the context above.
-  `;
-    },
-  
-    truncateContext(context: string, maxLength: number = 4000): string {
-      if (context.length <= maxLength) return context;
-      
-      // Try to truncate at a natural break point
-      const truncated = context.slice(0, maxLength);
-      const lastNewline = truncated.lastIndexOf('\n');
-      
-      if (lastNewline > maxLength * 0.8) {
-        return truncated.slice(0, lastNewline) + '\n... (truncated)';
-      }
-      
-      return truncated + '... (truncated)';
-    }
-  };
+```typescript
+// Example of context handling
+export class ModelInterface {
+  async query(prompt: string, context: FileInfo[], model: string): Promise<LLMResponse> {
+    // Convert FileInfo array to string context with truncation
+    const MAX_CONTENT_LENGTH = 1000; // Per-file limit
+    const contextString = context
+      .map(file => {
+        let content = file.content || '[No content available]';
+        if (content.length > MAX_CONTENT_LENGTH) {
+          content = content.slice(0, MAX_CONTENT_LENGTH) + '... [content truncated]';
+        }
+        return `File: ${file.path}\n${content}`;
+      })
+      .join('\n\n');
+    
+    // Process with selected model...
+  }
+}
 ```
 
+### Prompt Formatting
+The system uses a structured prompt format:
+```typescript
+const formatPrompt = (prompt: string, context: string): string => {
+  const systemPrompt = `You are a helpful AI assistant. Analyze the following file content and answer the question. Keep your response concise and focused on the question.`;
+  
+  // Ensure reasonable context size
+  const MAX_TOTAL_CONTEXT = 4000;
+  let formattedContext = context;
+  if (context.length > MAX_TOTAL_CONTEXT) {
+    formattedContext = context.slice(0, MAX_TOTAL_CONTEXT) + '\n... [additional context truncated for length]';
+  }
+  
+  return `${systemPrompt}\n\nContext:\n${formattedContext}\n\nQuestion: ${prompt}`;
+};
+```
+
+### Query Examples
+
+1. **Simple Query (No Context)**
+```json
+{
+  "query": "What is 2+2?",
+  "model": "ollama"
+}
+```
+
+2. **Single File Context**
+```json
+{
+  "path": "src/App.tsx",
+  "query": "What does this React component do?",
+  "model": "ollama"
+}
+```
+
+3. **Multiple Files Context**
+```json
+{
+  "path": ["src/App.tsx", "src/components/Button.tsx"],
+  "query": "Compare these two files",
+  "model": "ollama"
+}
+```
+
+### Performance Considerations
+
+1. **Context Size Management**
+   - Individual file content is limited to 1000 characters
+   - Total context is capped at 4000 characters
+   - Automatic truncation with clear indicators
+   - Prevents timeouts and memory issues
+
+2. **Response Time Optimization**
+   - Empty context queries process faster
+   - Large files are automatically truncated
+   - Multiple file contexts are properly formatted
+   - Clear logging for debugging response times
+
+3. **Error Handling**
+   - Graceful handling of missing files
+   - Clear error messages for context issues
+   - Proper logging of truncation events
+   - Network error handling with retries
 
 ### 3. Multi-Model Support
 - Ollama (local) integration
@@ -183,13 +251,28 @@ export class ModelInterface {
 
 ## API Endpoints
 
-### 1. List Files
-```
-GET /api/files
-Query params:
-  - path: string (optional, defaults to './')
-Response:
-  - Array of FileInfo objects with file/directory details
+### GET /api/files
+Lists files and directories within the storage directory.
+
+**Query Parameters:**
+- `path` (optional): Path relative to storage directory. Empty or "." returns storage root contents
+- `recursive` (optional): Boolean to list files recursively
+
+**Example Response:**
+```json
+[
+  {
+    "name": "code-samples",
+    "path": "code-samples",
+    "type": "directory"
+  },
+  {
+    "name": "config-example.json",
+    "path": "config-example.json",
+    "type": "file",
+    "content": "..."
+  }
+]
 ```
 
 ### 2. Upload File
@@ -286,22 +369,24 @@ npm start
 
 ## Security Features
 
-1. **Path Sanitization**
+1. **Storage Directory Isolation**
+   - All file operations restricted to `/storage` directory
+   - Path validation ensures no directory traversal outside storage
+   - Relative paths always resolved against storage root
+   - Empty or "." paths default to storage root
+
+2. **Path Sanitization**
    - Prevention of directory traversal attacks
    - Path validation and normalization
    - Safe file type checking
+   - All paths validated against storage root
 
-2. **File Upload Security**
+3. **File Upload Security**
+   - Files stored only in designated storage directory
    - File type validation
-   - File size limits (5MB max)
+   - File size limits (10MB max)
    - Secure file storage
-   - Safe file deletion
-
-3. **Input Validation**
-   - Query content validation
-   - Model type verification
-   - Path structure verification
-   - File content validation
+   - Safe file deletion within storage only
 
 ## Supported File Types
 
@@ -336,7 +421,7 @@ file-context-mcp/
 ├── src/
 │   ├── server.ts              # Main application server
 │   ├── core/                  # Core functionality
-│   │   ├── fileSystem.ts      # File operations handling
+│   │   ├── fileSystem.ts      # Secure file operations handling
 │   │   └── modelInterface.ts  # LLM provider integrations
 │   ├── utils/                 # Utility functions
 │   │   ├── fileUtils.ts       # File type & path utilities
@@ -446,4 +531,17 @@ Make sure to:
 5. Implementing rate limiting and caching
 
 This project demonstrates modern TypeScript/Node.js practices with a focus on modularity, type safety, and error handling while providing a flexible interface for LLM interactions with file-based context.
+
+### Security Considerations
+1. **Storage Directory**
+   - All file operations are restricted to the `/storage` directory
+   - Paths are validated and normalized before any operation
+   - Directory traversal attempts are blocked
+   - Relative paths are always resolved against storage root
+
+2. **Path Handling**
+   - Empty paths default to storage root
+   - "." is treated as storage root
+   - Parent directory references ("..") are sanitized
+   - Absolute paths are validated against storage root
 
