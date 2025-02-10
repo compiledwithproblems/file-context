@@ -1,18 +1,18 @@
 import { useState, useCallback } from 'react';
-import { Message, QueryRequest, QueryResponse } from '../types';
+import { Message, QueryRequest } from '../types';
 import { queryLLM } from '../utils/api';
 
 // Helper to normalize paths to use forward slashes and ensure relative to storage
-const normalizePath = (path: string) => {
-  if (!path) return '';
-  // Remove any leading slashes and 'storage/' prefix and ensure path is relative
-  const cleanPath = path
-    .replace(/^[\/\\]|^storage[\/\\]/, '')  // Remove leading slashes and storage prefix
-    .replace(/\\/g, '/')  // Convert backslashes to forward slashes
-    .replace(/\/+/g, '/') // Remove any double slashes
-    .replace(/^\.\//, ''); // Remove leading ./
-  return cleanPath;
-};
+// const normalizePath = (path: string) => {
+//   if (!path) return '';
+//   // Remove any leading slashes and 'storage/' prefix and ensure path is relative
+//   const cleanPath = path
+//     .replace(/^[\/\\]|^storage[\/\\]/, '')  // Remove leading slashes and storage prefix
+//     .replace(/\\/g, '/')  // Convert backslashes to forward slashes
+//     .replace(/\/+/g, '/') // Remove any double slashes
+//     .replace(/^\.\//, ''); // Remove leading ./
+//   return cleanPath;
+// };
 
 export function useChat() {
   const [messages, setMessages] = useState<Message[]>([]);

@@ -23,7 +23,7 @@ function App() {
     sendMessage,
   } = useChat();
 
-  const isLoading = isFileLoading || isChatLoading;
+  // const isLoading = isFileLoading || isChatLoading;
   const error = fileError || chatError;
 
   return (

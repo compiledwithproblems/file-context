@@ -24,14 +24,15 @@ services:
     ports:
       - "3001:3001"
     volumes:
-      - ./file-context-mcp:/app
-      - /app/node_modules
       - ./file-context-mcp/storage:/app/storage
     environment:
       - PORT=3001
       - TOGETHER_API_KEY=${TOGETHER_API_KEY}
-      - OLLAMA_BASE_URL=http://localhost:11434
+      - OLLAMA_BASE_URL=http://host.docker.internal:11434
+      - LLAMA_CPP_BASE_URL=http://host.docker.internal:8080
       - MODEL_NAME=llama3.2
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     env_file:
       - file-context-mcp/.env
 
