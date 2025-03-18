@@ -27,6 +27,7 @@ The project consists of two main components:
 
 ### Using Docker Compose (Recommended)
 
+
 1. Clone the repository:
    ```bash
    git clone https://github.com/yourusername/file-context.git
